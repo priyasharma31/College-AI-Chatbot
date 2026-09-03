@@ -1,76 +1,106 @@
-from pathlib import Path
-from sentence_transformers import SentenceTransformer
-import faiss
+import os
 import pickle
+import faiss
+from sentence_transformers import SentenceTransformer
+
+DATA_FILE = "data/college_info.txt"
+INDEX_FILE = "college.index"
+CHUNKS_FILE = "chunks.pkl"
+
+EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 
-# --------------------------------
-# 1. Load knowledge base
-# --------------------------------
-
-file_path = Path("data/college_info.txt")
-
-text = file_path.read_text(encoding="utf-8")
+# Load document
+with open(DATA_FILE, "r", encoding="utf-8") as file:
+    text = file.read()
 
 print("Knowledge base loaded!")
 
 
-# --------------------------------
-# 2. Create chunks
-# --------------------------------
+# -----------------------------------
+# Better chunking
+# -----------------------------------
+
+sections = text.split("==================================================")
 
 chunks = []
 
-# Split according to sections
-sections = text.split("\n\n")
-
 for section in sections:
+
     section = section.strip()
 
-    if section:
+    if not section:
+        continue
+
+    # Keep reasonably sized sections together
+    words = section.split()
+
+    # If section is small, keep it as one chunk
+    if len(words) <= 250:
         chunks.append(section)
+
+    else:
+        # Split large sections into overlapping chunks
+        chunk_size = 180
+        overlap = 40
+
+        start = 0
+
+        while start < len(words):
+
+            chunk_words = words[start:start + chunk_size]
+
+            chunk = " ".join(chunk_words)
+
+            chunks.append(chunk)
+
+            start += chunk_size - overlap
 
 
 print(f"Created {len(chunks)} chunks")
 
 
-# --------------------------------
-# 3. Create embeddings
-# --------------------------------
+# -----------------------------------
+# Create embeddings
+# -----------------------------------
+
+print("Loading embedding model...")
+
+model = SentenceTransformer(EMBEDDING_MODEL)
 
 print("Creating embeddings...")
 
-model = SentenceTransformer("all-MiniLM-L6-v2")
+embeddings = model.encode(
+    chunks,
+    convert_to_numpy=True,
+    normalize_embeddings=True
+)
 
-embeddings = model.encode(chunks)
 
-print("Embeddings created!")
-
-
-# --------------------------------
-# 4. Create FAISS index
-# --------------------------------
+# -----------------------------------
+# Create FAISS index
+# -----------------------------------
 
 dimension = embeddings.shape[1]
 
-index = faiss.IndexFlatL2(dimension)
+index = faiss.IndexFlatIP(dimension)
 
-index.add(embeddings)
-
-
-# --------------------------------
-# 5. Save FAISS index
-# --------------------------------
-
-faiss.write_index(index, "college.index")
+index.add(embeddings.astype("float32"))
 
 
-# Save chunks
-with open("chunks.pkl", "wb") as file:
+# -----------------------------------
+# Save files
+# -----------------------------------
+
+faiss.write_index(index, INDEX_FILE)
+
+with open(CHUNKS_FILE, "wb") as file:
     pickle.dump(chunks, file)
 
 
-print("FAISS index saved!")
-print("Chunks saved!")
-
-print("\nYour RAG knowledge base is ready!")
+print()
+print("================================")
+print("Ingestion completed successfully!")
+print("================================")
+print(f"Saved index  : {INDEX_FILE}")
+print(f"Saved chunks : {CHUNKS_FILE}")
